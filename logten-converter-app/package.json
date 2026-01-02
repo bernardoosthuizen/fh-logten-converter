@@ -27,6 +27,6 @@
 		"vite": "^7.2.6"
 	},
 	"dependencies": {
-		"@sveltestrap/sveltestrap": "^7.1.0"
+		"ics-to-json": "^2.0.2"
 	}
 }

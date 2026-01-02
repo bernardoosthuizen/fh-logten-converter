@@ -1,9 +1,22 @@
 <script>
+    import { icsToJson } from "ics-to-json";
+
     let files = $state();
     let fileName = $state('Choose .ics file');
     let message = $state();
     let fileContent = $state('');
     let fileUploaded = $state(false);
+    let loading = $state(false);
+
+    let payload = $state({
+        "entities": [],
+        "metadata": {
+            "dateAndTimeFormat": "MM/dd/yyyy HH:mm",
+            "timesAreZulu": true,
+            "application": "ICS to LogTen Pro Converter",
+            "dateFormat": "MM/dd/yyyy",
+            "version": "1.0"
+    }});
 
     function handleFileChange(e) {
         if (files && files.length > 0) {
@@ -25,16 +38,99 @@
         reader.readAsText(file);
     }
 
-    function convertICStoJSON(file) {
-        if (!file) {
-            message = 'No file selected';
-            return;
+    function calSummaryConverter(summary) {
+
+        function extractFlightDetails(detailString) {
+            // Extract flight number
+            const flightNumberMatch = summary.match(/(CX|A)\s?\d+/);
+
+            // Extract departure IATA (three letters before the second '-')
+            const firstDashIndex = summary.indexOf('-');
+            const secondDashIndex = summary.indexOf('-', firstDashIndex + 1);
+            const departureIATA = secondDashIndex > 2 ? summary.substring(secondDashIndex - 3, secondDashIndex) : null;
+            const arrivalIATA = secondDashIndex >= 0 && secondDashIndex + 3 < summary.length ? summary.substring(secondDashIndex + 1, secondDashIndex + 4) : null;
+
+            return {
+                flightNumber: flightNumberMatch ? flightNumberMatch[0].replace(/\s/g, '') : null,
+                departureIATA,
+                arrivalIATA
+            };
         }
+
+        if (summary.includes('/')) {
+            const flightParts = summary.split('/');
+            const formattedParts = [];
+
+            for (const part of flightParts) {
+                formattedParts.push(extractFlightDetails(part));
+            }
+            
+            return formattedParts;
+
+        }
+        else {
+            return extractFlightDetails(summary);
+        };
+        
+    }
+
+    function dateConverter(icsDate) {
+        // Convert ICS date format to JavaScript Date object
+        const year = icsDate.substring(0, 4);
+        const month = icsDate.substring(4, 6) - 1; // Months are zero-based in JS
+        const day = icsDate.substring(6, 8);
+        const hours = icsDate.substring(9, 11);
+        const minutes = icsDate.substring(11, 13);
+        const seconds = icsDate.substring(13, 15);
+
+        return `${month + 1}/${day}/${year}`; // MM/DD/YYYY
+    }
+
+    function dateTimeConverter(icsDate) {
+        // Convert ICS date format to JavaScript Date object
+        const year = icsDate.substring(0, 4);
+        const month = icsDate.substring(4, 6) - 1; // Months are zero-based in JS
+        const day = icsDate.substring(6, 8);
+        const hours = icsDate.substring(9, 11);
+        const minutes = icsDate.substring(11, 13);
+        const seconds = icsDate.substring(13, 15);
+
+        return new Date(Date.UTC(year, month, day, hours, minutes, seconds)).toISOString(); // ISO String in UTC
+    }
+
+    function convertICStoJSON() {
+        loading = true;
+
         // Add your conversion logic here
         message = 'Converting...';
-        // Example: parse ICS content
-        // const lines = fileContent.split('\n');
-        // Process and convert...
+
+        const jsonICSData = icsToJson(fileContent);
+
+        // Add converted data to payload
+        for (const event of jsonICSData) {
+            
+            if (event.summary.includes('CX') || event.summary.includes('A')) {
+                const summary = calSummaryConverter(event.summary);
+                for (const flightSector of (Array.isArray(summary) ? summary : [summary])) {
+                    payload.entities.push({
+                        "flight_flightDate": dateConverter(event.startDate),
+                        "flight_flightDutyStartTime": dateConverter(event.startDate),
+                        "flight_flightDutyEndTime": dateConverter(event.endDate),
+                        "flight_flightNumber": flightSector.flightNumber,
+                        "entity_name": "Flight",
+                        "flight_type": event.summary.includes('CX') ? 0 : 3,    
+                        "flight_from": flightSector.departureIATA,
+                        "flight_to": flightSector.arrivalIATA,
+                    });
+                    console.log(dateTimeConverter(event.startDate))
+                }
+            }
+            
+        }
+
+        window.location.href = 'logten://v2/addEntities?package=' + encodeURIComponent(JSON.stringify(payload));
+
+        console.log('Final payload:', payload);
     }
 
     function resetUpload() {
@@ -44,32 +140,6 @@
         fileUploaded = false;
         message = '';
     }
-
-    function downloadContent(format = 'json') {
-        if (!fileContent) {
-            message = 'No file content to download';
-            return;
-        }
-        
-        let content = fileContent;
-        let type = 'text/plain';
-        let extension = 'txt';
-        
-        if (format === 'json') {
-            // Convert ICS to JSON if needed
-            extension = 'json';
-            type = 'application/json';
-        }
-        
-        const blob = new Blob([content], { type });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = `converted_file.${extension}`;
-        a.click();
-        URL.revokeObjectURL(url);
-    }
-
 </script>
 
 <div class="page-container">
@@ -78,14 +148,20 @@
     </p>
     
     {#if fileUploaded}
-        <div class="file-actions">
-            <button 
-                class="button-secondary"
-                onclick={() => {downloadContent('json')}}
-            >
-                Import to LogTen Pro
-            </button>
-        </div>
+        {#if !loading}
+            <div class="file-actions">
+                <button 
+                    class="button-secondary"
+                    onclick={() => {convertICStoJSON()}}
+                >
+                    Import to LogTen Pro
+                </button>
+            </div>
+        {:else}
+            <div class="file-actions">
+                Thinking
+            </div>
+        {/if}
         {#if fileContent}
             <div class="preview-container">
                 <h3>File Preview</h3>
@@ -98,7 +174,7 @@
                 type="file" 
                 bind:files
                 onchange={handleFileChange}
-                accept=".ics,.csv,.txt,text/calendar,text/csv" 
+                accept=".ics,text/calendar" 
                 id="file" 
                 />
             <label for="file">{fileName}</label>
