@@ -109,7 +109,7 @@
         // Add converted data to payload
         for (const event of jsonICSData) {
             
-            if (event.summary.includes('CX') || event.summary.includes('A')) {
+            if (/(CX|[ANTBS])\s?\d{4}/.test(event.summary)) {
                 const summary = calSummaryConverter(event.summary);
                 for (const flightSector of (Array.isArray(summary) ? summary : [summary])) {
                     payload.entities.push({
@@ -122,7 +122,6 @@
                         "flight_from": flightSector.departureIATA,
                         "flight_to": flightSector.arrivalIATA,
                     });
-                    console.log(dateTimeConverter(event.startDate))
                 }
             }
             
