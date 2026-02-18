@@ -15,6 +15,7 @@
             "timesAreZulu": true,
             "application": "ICS to LogTen Pro Converter",
             "dateFormat": "MM/dd/yyyy",
+            "shouldApplyAutoFillTimes": true,
             "version": "1.0"
     }});
 
@@ -40,9 +41,9 @@
 
     function calSummaryConverter(summary) {
 
-        function extractFlightDetails(detailString) {
+        function extractFlightDetails(summary) {
             // Extract flight number
-            const flightNumberMatch = summary.match(/(CX|A)\s?\d+/);
+            const flightNumberMatch = summary.match(/CX\s?\d+/);
 
             // Extract departure IATA (three letters before the second '-')
             const firstDashIndex = summary.indexOf('-');
@@ -86,16 +87,30 @@
         return `${month + 1}/${day}/${year}`; // MM/DD/YYYY
     }
 
-    function dateTimeConverter(icsDate) {
-        // Convert ICS date format to JavaScript Date object
-        const year = icsDate.substring(0, 4);
-        const month = icsDate.substring(4, 6) - 1; // Months are zero-based in JS
-        const day = icsDate.substring(6, 8);
-        const hours = icsDate.substring(9, 11);
-        const minutes = icsDate.substring(11, 13);
-        const seconds = icsDate.substring(13, 15);
+    function dateTimeConverter(icsDate, startTimeChange = 0) {
 
-        return new Date(Date.UTC(year, month, day, hours, minutes, seconds)).toISOString(); // ISO String in UTC
+        const date = new Date(
+            icsDate.substring(0, 4), // Year
+            icsDate.substring(4, 6) - 1, // Month (zero-based)
+            icsDate.substring(6, 8), // Day
+            icsDate.substring(9, 11), // Hours
+            icsDate.substring(11, 13), // Minutes
+            icsDate.substring(13, 15) // Seconds
+        );
+
+
+        // Adjust date by minutes if needed
+        const adjustedDate = new Date(date.getTime() + startTimeChange * 60000); // Convert minutes to milliseconds
+    
+        // Convert adjusted date back to desired format
+        const year = adjustedDate.getFullYear();
+        const month = adjustedDate.getMonth(); // Months are zero-based in JS
+        const day = adjustedDate.getDate();
+        const hours = adjustedDate.getHours();
+        const minutes = adjustedDate.getMinutes();
+        const seconds = adjustedDate.getSeconds();
+
+        return `${month + 1}/${day}/${year} ${hours}:${minutes}`; // MM/DD/YYYY HH:mm
     }
 
     function convertICStoJSON() {
@@ -109,13 +124,26 @@
         // Add converted data to payload
         for (const event of jsonICSData) {
             
-            if (/(CX|[ANTBS])\s?\d{4}/.test(event.summary)) {
+            if (/CX|[ANTBS]\s?\d{4}/.test(event.summary)) {
                 const summary = calSummaryConverter(event.summary);
-                for (const flightSector of (Array.isArray(summary) ? summary : [summary])) {
+                for (const [index, flightSector] of (Array.isArray(summary) ? summary : [summary]).entries()) {
+                    console.log(dateTimeConverter(event.startDate))
+
+                    const startTimeChange = event.summary.includes('CX') ? (flightSector.departureIATA == 'HKG' ? -70 : -60) : 0; 
+                    const isIntegratedPattern = summary.length > 0 ? true : false; // Check if the summary contains multiple flight sectors
+
+                    console.log('sector number:', index, isIntegratedPattern);
+
+                    // TODO - Handle integrated patterns with multiple sectors (e.g., CX flights with same flight number but different departure/arrival times)
+
+                    const arrivalDateTime = isIntegratedPattern && index < summary.length - 1 ? null : dateTimeConverter(event.endDate);
+                    // TODO - crashing coz you cant pass null for arrival time for integrated patterns, need to find a workaround for this (maybe set it to departure time + 1hr or something and then user can adjust it in LogTen Pro if needed?)
                     payload.entities.push({
                         "flight_flightDate": dateConverter(event.startDate),
-                        "flight_flightDutyStartTime": dateConverter(event.startDate),
-                        "flight_flightDutyEndTime": dateConverter(event.endDate),
+                        "flight_flightDutyStartTime": index > 0 ? null : dateTimeConverter(event.startDate),
+                        "flight_flightDutyEndTime": arrivalDateTime,
+                        "flight_scheduledDepartureTime": index > 0 ? null : dateTimeConverter(event.startDate, startTimeChange), // Adjust departure time for CX flights
+                        "flight_scheduledArrivalTime": arrivalDateTime,
                         "flight_flightNumber": flightSector.flightNumber,
                         "entity_name": "Flight",
                         "flight_type": event.summary.includes('CX') ? 0 : 3,    
@@ -124,7 +152,6 @@
                     });
                 }
             }
-            
         }
 
         window.location.href = 'logten://v2/addEntities?package=' + encodeURIComponent(JSON.stringify(payload));
@@ -150,7 +177,7 @@
         {#if !loading}
             <div class="file-actions">
                 <button 
-                    class="button-secondary"
+                    class="button-primary"
                     onclick={() => {convertICStoJSON()}}
                 >
                     Import to LogTen Pro
@@ -272,8 +299,7 @@
         transform: scale(1.05);
     }
 
-    .button-primary,
-    .button-secondary {
+    .button-primary {
         background: #f15d22;
         border: none;
         border-radius: 5px;
@@ -288,19 +314,9 @@
         vertical-align: middle;
     }
 
-    .button-primary:hover,
-    .button-secondary:hover {
+    .button-primary:hover {
         background: #d94a1a;
         transform: scale(1.05);
-    }
-
-    .button-secondary {
-        background: #6c757d;
-        margin-top: 0.5rem;
-    }
-
-    .button-secondary:hover {
-        background: #5a6268;
     }
 
 </style>
