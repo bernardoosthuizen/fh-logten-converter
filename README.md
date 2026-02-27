@@ -1,2 +1,7 @@
 # FH LogTen Pro Converter
-Convert roster .ics files into LogTen Pro
+Import your roster to LogTen Pro from a .ics file.
+
+## Tutrial
+
+## Bugs & Suggestions
+Please open a new issue with all suggestions and bug reports. 
