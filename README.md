@@ -1,5 +1,6 @@
 # FH LogTen Pro Converter
 Import your roster to LogTen Pro from a .ics file.
+https://bernardoosthuizen.github.io/fh-logten-converter/
 
 ## Tutorial
 
