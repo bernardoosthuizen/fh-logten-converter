@@ -8,6 +8,10 @@
     let fileUploaded = $state(false);
     let loading = $state(false);
 
+    /* 
+        Initialize payload with metadata, entities will be added to this object as we process the ICS data.
+        This dict will be passed to LogTen Pro via the URL scheme, which will parse it and add the flight entries to the user's logbook.
+    */
     let payload = $state({
         "entities": [],
         "metadata": {
@@ -23,7 +27,7 @@
         if (files && files.length > 0) {
             fileName = files[0].name;
             fileUploaded = true;
-            message = `File loaded: ${files[0].name}`;
+            message = `${files[0].name}`;
             readFileContent(files[0]);
         }
     }
@@ -39,8 +43,10 @@
         reader.readAsText(file);
     }
 
+    // This function takes the summary string from the ICS event and extracts flight details.
     function calSummaryConverter(summary) {
 
+        // 
         function extractFlightDetails(summary) {
             // Extract flight number
             const flightNumberMatch = summary.match(/CX\s?\d+/);
@@ -58,6 +64,7 @@
             };
         }
 
+        // Check if the summary contains multiple flight sectors (indicated by the presence of '/')
         if (summary.includes('/')) {
             const flightParts = summary.split('/');
             const formattedParts = [];
@@ -75,8 +82,9 @@
         
     }
 
+    // Convert ICS date format to JavaScript Date object and then format it to MM/DD/YYYY for LogTen Pro.
     function dateConverter(icsDate) {
-        // Convert ICS date format to JavaScript Date object
+        
         const year = icsDate.substring(0, 4);
         const month = icsDate.substring(4, 6) - 1; // Months are zero-based in JS
         const day = icsDate.substring(6, 8);
@@ -87,6 +95,7 @@
         return `${month + 1}/${day}/${year}`; // MM/DD/YYYY
     }
 
+    // This function converts ICS date and time format to JavaScript Date object, applies any necessary time adjustments, and formats it to MM/DD/YYYY HH:mm for LogTen Pro.
     function dateTimeConverter(icsDate, startTimeChange = 0) {
 
         const date = new Date(
@@ -113,6 +122,7 @@
         return `${month + 1}/${day}/${year} ${hours}:${minutes}`; // MM/DD/YYYY HH:mm
     }
 
+    // This function constructs the payload for LogtenPro.
     function convertICStoJSON() {
         loading = true;
 
@@ -127,29 +137,61 @@
             if (/CX|[ANTBS]\s?\d{4}/.test(event.summary)) {
                 const summary = calSummaryConverter(event.summary);
                 for (const [index, flightSector] of (Array.isArray(summary) ? summary : [summary]).entries()) {
-                    console.log(dateTimeConverter(event.startDate))
 
-                    const startTimeChange = event.summary.includes('CX') ? (flightSector.departureIATA == 'HKG' ? -70 : -60) : 0; 
+                    const startTimeChange = event.summary.includes('CX') ? (flightSector.departureIATA == 'HKG' ? 70 : 60) : 0; 
                     const isIntegratedPattern = summary.length > 0 ? true : false; // Check if the summary contains multiple flight sectors
 
-                    console.log('sector number:', index, isIntegratedPattern);
-
-                    // TODO - Handle integrated patterns with multiple sectors (e.g., CX flights with same flight number but different departure/arrival times)
 
                     const arrivalDateTime = isIntegratedPattern && index < summary.length - 1 ? null : dateTimeConverter(event.endDate);
-                    // TODO - crashing coz you cant pass null for arrival time for integrated patterns, need to find a workaround for this (maybe set it to departure time + 1hr or something and then user can adjust it in LogTen Pro if needed?)
-                    payload.entities.push({
+                    
+                    // Construct the payload for this flight sector. Start with common fields, then conditionally add fields based on flight type and pattern.
+                    let tempPayload = {
                         "flight_flightDate": dateConverter(event.startDate),
-                        "flight_flightDutyStartTime": index > 0 ? null : dateTimeConverter(event.startDate),
-                        "flight_flightDutyEndTime": arrivalDateTime,
-                        "flight_scheduledDepartureTime": index > 0 ? null : dateTimeConverter(event.startDate, startTimeChange), // Adjust departure time for CX flights
-                        "flight_scheduledArrivalTime": arrivalDateTime,
-                        "flight_flightNumber": flightSector.flightNumber,
                         "entity_name": "Flight",
-                        "flight_type": event.summary.includes('CX') ? 0 : 3,    
-                        "flight_from": flightSector.departureIATA,
-                        "flight_to": flightSector.arrivalIATA,
-                    });
+                        "flight_type": event.summary.includes('CX') ? 0 : 3,   
+                    };
+
+                    // If the flight is a sim, exclude flight number, departure and arrival airports.
+                    if (tempPayload.flight_type != 3) {
+                        tempPayload = {
+                            ...tempPayload,
+                            "flight_flightNumber": flightSector.flightNumber,
+                            "flight_from": flightSector.departureIATA,
+                            "flight_to": flightSector.arrivalIATA,
+                            }
+                        }
+
+                    if(isIntegratedPattern) {
+                        // For the first flight of the day, set the flight duty start time. 
+                        if (index === 0) {
+                            tempPayload = {
+                                ...tempPayload,
+                                "flight_flightDutyStartTime": dateTimeConverter(event.startDate),
+                                "flight_scheduledDepartureTime": dateTimeConverter(event.startDate, startTimeChange),
+                            }
+
+                        // For the last flight of the day, set the flight duty end time and scheduled arrival time. 
+                        } else if (index === summary.length - 1) {
+                            tempPayload = {
+                                ...tempPayload,
+                                "flight_flightDutyEndTime": arrivalDateTime,
+                                "flight_scheduledArrivalTime": arrivalDateTime,
+                            }
+                        }
+
+                        // Leave times blank for intermediate flight.
+                    } else {
+                        // For non-integrated patterns, set the flight times.
+                        tempPayload = {
+                            ...tempPayload,
+                            "flight_flightDutyStartTime": dateTimeConverter(event.startDate),
+                            "flight_scheduledDepartureTime": dateTimeConverter(event.startDate, startTimeChange),
+                            "flight_flightDutyEndTime": arrivalDateTime,
+                            "flight_scheduledArrivalTime": arrivalDateTime,
+                        }
+                    }
+
+                    payload.entities.push(tempPayload);
                 }
             }
         }
@@ -157,6 +199,8 @@
         window.location.href = 'logten://v2/addEntities?package=' + encodeURIComponent(JSON.stringify(payload));
 
         console.log('Final payload:', payload);
+
+        resetUpload();
     }
 
     function resetUpload() {
@@ -177,7 +221,7 @@
         {#if !loading}
             <div class="file-actions">
                 <button 
-                    class="button-primary"
+                    class="upload-button"
                     onclick={() => {convertICStoJSON()}}
                 >
                     Import to LogTen Pro
@@ -186,12 +230,6 @@
         {:else}
             <div class="file-actions">
                 Thinking
-            </div>
-        {/if}
-        {#if fileContent}
-            <div class="preview-container">
-                <h3>File Preview</h3>
-                <textarea readonly rows="10" value={fileContent}></textarea>
             </div>
         {/if}
     {:else}
@@ -207,6 +245,7 @@
         </div>
     {/if}
     {#if message}
+        <p class="message">File Ready for Upload :</p>
         <p class="message">{message}</p>
     {/if}
 </div>
@@ -237,26 +276,6 @@
         gap: 0.5rem;
         align-items: center;
         width: 100%;
-    }
-
-    .preview-container {
-        width: 100%;
-        margin-top: 1rem;
-    }
-
-    .preview-container h3 {
-        margin: 0 0 0.5rem 0;
-        color: var(--color-text-primary);
-    }
-
-    textarea {
-        width: 100%;
-        padding: 0.5rem;
-        border: 1px solid #ccc;
-        border-radius: 5px;
-        font-family: monospace;
-        font-size: 0.9rem;
-        resize: vertical;
     }
 
     p {
@@ -299,23 +318,25 @@
         transform: scale(1.05);
     }
 
-    .button-primary {
-        background: #f15d22;
+    .upload-button {
+        background-color: blue;
         border: none;
         border-radius: 5px;
         color: #fff;
         cursor: pointer;
+        display: inline-block;
         font-family: 'Rubik', sans-serif;
         font-size: inherit;
         font-weight: 500;
+        margin-bottom: 1rem;
         outline: none;
-        padding: 0.75rem 30px;
+        padding: 1rem 50px;
+        position: relative;
         transition: all 0.3s;
         vertical-align: middle;
     }
 
-    .button-primary:hover {
-        background: #d94a1a;
+    .upload-button:hover {;
         transform: scale(1.05);
     }
 
