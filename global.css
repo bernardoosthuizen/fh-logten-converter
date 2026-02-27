@@ -95,7 +95,7 @@ p.message {
 }
 
 .upload-button {
-    background-color: blue;
+    background-color: #f15d22;
     border: none;
     border-radius: 5px;
     color: #fff;
@@ -112,6 +112,7 @@ p.message {
     vertical-align: middle;
 }
 
-.upload-button:hover {;
+.upload-button:hover {
+    background: #d94a1a;
     transform: scale(1.05);
 }
